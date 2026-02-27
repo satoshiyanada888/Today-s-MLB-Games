@@ -592,6 +592,7 @@ let hypePollIntervalMs = 120_000;
 let lastHypeLevel = null;
 let lastHypeVibeAtMs = 0;
 let hypeBumpTimerId = null;
+let hypeDemoState = null; // { level: 'calm'|'warm'|'hot'|'insane', live: boolean } | null
 
 function stopHypePolling() {
   if (hypePollTimerId) {
@@ -646,6 +647,31 @@ function vibrateForLevel(level) {
   if (level === 'insane') navigator.vibrate([30, 40, 30, 40, 60]);
   else if (level === 'hot') navigator.vibrate([25, 30, 40]);
   else if (level === 'warm') navigator.vibrate(20);
+}
+
+function demoValueForLevel(level) {
+  if (level === 'insane') return 92;
+  if (level === 'hot') return 68;
+  if (level === 'warm') return 38;
+  return 12;
+}
+
+function applyHypeDemo(level, live) {
+  const lv = level || 'calm';
+  hypeDemoState = { level: lv, live: Boolean(live) };
+  stopHypePolling();
+  const t = getHypeText();
+  const levelText = getHypeLevelText(lv);
+  setHypeUI({
+    value: demoValueForLevel(lv),
+    rightTag: 'DEMO',
+    sub: `${levelText.flavor} · ${t.noData}`,
+    live: Boolean(live),
+  });
+}
+
+function clearHypeDemo() {
+  hypeDemoState = null;
 }
 
 function getHypeText() {
@@ -961,6 +987,88 @@ function renderPickCard() {
 
   if (!pickGame) {
     stopHypePolling();
+    if (IS_DEBUG) {
+      const labelText = currentLang === 'en' ? "Today's pick (Demo)" : '今日の1試合（デモ）';
+      container.className = 'pick-card';
+      container.dataset.hypeLive = 'false';
+      container.dataset.hypeLevel = 'calm';
+      container.innerHTML = `
+        <div class="pick-label">${labelText}</div>
+        <h2 class="pick-title">
+          <span class="pick-team">
+            <span class="pick-badge pick-badge-away">AW</span>
+            <span class="pick-team-name">${currentLang === 'en' ? 'Away' : 'アウェイ'}</span>
+          </span>
+          <span class="pick-vs">vs</span>
+          <span class="pick-team">
+            <span class="pick-badge pick-badge-home">HM</span>
+            <span class="pick-team-name">${currentLang === 'en' ? 'Home' : 'ホーム'}</span>
+          </span>
+        </h2>
+        <div class="pick-status">${
+          currentLang === 'en'
+            ? 'Debug demo: force hype levels to see glow.'
+            : 'デバッグ用デモ：盛り上がり段階を強制して光り方を確認できます。'
+        }</div>
+        <div class="pick-hype" id="pick-hype" data-level="calm" data-live="false">
+          <div class="pick-hype-head">
+            <div class="pick-hype-title">${getHypeText().title}</div>
+            <div class="pick-hype-right">
+              <span class="pick-hype-tag" id="pick-hype-tag"></span>
+              <span class="pick-hype-stage pick-hype-stage-calm" id="pick-hype-stage">${getHypeLevelText('calm').label}</span>
+              <span class="pick-hype-value" id="pick-hype-value">-- / 100</span>
+            </div>
+          </div>
+          <div class="pick-hype-bar">
+            <div class="pick-hype-fill" id="pick-hype-fill" style="width:0%"></div>
+          </div>
+          <div class="pick-hype-sub" id="pick-hype-sub">${getHypeText().waiting}</div>
+        </div>
+        <div class="pick-debug">
+          <button type="button" class="pick-debug-btn" data-hype-demo="calm">CALM</button>
+          <button type="button" class="pick-debug-btn" data-hype-demo="warm">WARM</button>
+          <button type="button" class="pick-debug-btn" data-hype-demo="hot">HOT</button>
+          <button type="button" class="pick-debug-btn" data-hype-demo="insane">INSANE</button>
+          <button type="button" class="pick-debug-btn" data-hype-live="toggle">${
+            currentLang === 'en' ? 'Toggle LIVE' : 'LIVE切替'
+          }</button>
+          <button type="button" class="pick-debug-btn" data-hype-demo="auto">${
+            currentLang === 'en' ? 'Auto' : '自動'
+          }</button>
+        </div>
+      `;
+
+      const demoBtns = container.querySelectorAll('[data-hype-demo]');
+      demoBtns.forEach((b) => {
+        b.addEventListener('click', () => {
+          const mode = b.getAttribute('data-hype-demo') || '';
+          if (mode === 'auto') {
+            clearHypeDemo();
+            stopHypePolling();
+            setHypeUI({ value: 0, rightTag: '', sub: getHypeText().waiting, live: false });
+            return;
+          }
+          const live = hypeDemoState?.live ?? false;
+          applyHypeDemo(mode, live);
+        });
+      });
+      const liveBtn = container.querySelector('[data-hype-live="toggle"]');
+      if (liveBtn) {
+        liveBtn.addEventListener('click', () => {
+          const level = hypeDemoState?.level || 'calm';
+          const live = !(hypeDemoState?.live ?? false);
+          applyHypeDemo(level, live);
+        });
+      }
+
+      if (hypeDemoState) {
+        applyHypeDemo(hypeDemoState.level, hypeDemoState.live);
+      } else {
+        setHypeUI({ value: 0, rightTag: 'DEMO', sub: getHypeText().waiting, live: false });
+      }
+      return;
+    }
+
     container.innerHTML =
       currentLang === 'en'
         ? '<div class="pick-card-empty">No games today.</div>'
@@ -1105,6 +1213,16 @@ function renderPickCard() {
             <button type="button" class="pick-debug-btn" data-debug="miss">${
               currentLang === 'en' ? 'Debug: MISS' : 'デバッグ: ハズレ'
             }</button>
+            <button type="button" class="pick-debug-btn" data-hype-demo="calm">CALM</button>
+            <button type="button" class="pick-debug-btn" data-hype-demo="warm">WARM</button>
+            <button type="button" class="pick-debug-btn" data-hype-demo="hot">HOT</button>
+            <button type="button" class="pick-debug-btn" data-hype-demo="insane">INSANE</button>
+            <button type="button" class="pick-debug-btn" data-hype-live="toggle">${
+              currentLang === 'en' ? 'Toggle LIVE' : 'LIVE切替'
+            }</button>
+            <button type="button" class="pick-debug-btn" data-hype-demo="auto">${
+              currentLang === 'en' ? 'Auto' : '自動'
+            }</button>
           </div>`
         : ''
     }
@@ -1136,9 +1254,35 @@ function renderPickCard() {
     if (missBtn) {
       missBtn.addEventListener('click', () => forceDebugResult('miss'));
     }
+
+    const demoBtns = container.querySelectorAll('[data-hype-demo]');
+    demoBtns.forEach((b) => {
+      b.addEventListener('click', () => {
+        const mode = b.getAttribute('data-hype-demo') || '';
+        if (mode === 'auto') {
+          clearHypeDemo();
+          initHypeForPick(pickGame.gamePk);
+          return;
+        }
+        const live = hypeDemoState?.live ?? false;
+        applyHypeDemo(mode, live);
+      });
+    });
+    const liveBtn = container.querySelector('[data-hype-live="toggle"]');
+    if (liveBtn) {
+      liveBtn.addEventListener('click', () => {
+        const level = hypeDemoState?.level || 'calm';
+        const live = !(hypeDemoState?.live ?? false);
+        applyHypeDemo(level, live);
+      });
+    }
   }
 
-  initHypeForPick(pickGame.gamePk);
+  if (IS_DEBUG && hypeDemoState) {
+    applyHypeDemo(hypeDemoState.level, hypeDemoState.live);
+  } else {
+    initHypeForPick(pickGame.gamePk);
+  }
 }
 
 function renderAllGames() {
