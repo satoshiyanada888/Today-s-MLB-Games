@@ -1,0 +1,8 @@
+.DS_Store
+
+# Local secrets
+config.js
+
+# Optional local files
+*.log
+

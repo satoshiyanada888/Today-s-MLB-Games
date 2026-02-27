@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800">
+  <defs>
+    <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.65" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.00"/>
+    </linearGradient>
+  </defs>
+
+  <!-- subtle fog -->
+  <rect width="1200" height="800" fill="url(#mist)"/>
+
+  <!-- stadium bowl -->
+  <path d="M120 520
+           C 250 330, 420 250, 600 250
+           C 780 250, 950 330, 1080 520"
+        fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- upper deck -->
+  <path d="M190 520
+           C 300 365, 440 305, 600 305
+           C 760 305, 900 365, 1010 520"
+        fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- light towers -->
+  <g stroke="#ffffff" stroke-opacity="0.10" stroke-width="6" stroke-linecap="round">
+    <path d="M165 245 L165 480"/>
+    <path d="M1035 245 L1035 480"/>
+  </g>
+  <g stroke="#ffffff" stroke-opacity="0.08" stroke-width="4" stroke-linecap="round">
+    <path d="M120 260 L210 260"/>
+    <path d="M990 260 L1080 260"/>
+    <path d="M128 290 L202 290"/>
+    <path d="M998 290 L1072 290"/>
+  </g>
+
+  <!-- field arc -->
+  <path d="M260 560
+           C 360 450, 470 400, 600 400
+           C 730 400, 840 450, 940 560"
+        fill="none" stroke="#22c55e" stroke-opacity="0.12" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- infield diamond -->
+  <g fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="6" stroke-linejoin="round">
+    <path d="M600 455 L665 520 L600 585 L535 520 Z"/>
+  </g>
+
+  <!-- baselines -->
+  <g stroke="#ffffff" stroke-opacity="0.07" stroke-width="4" stroke-linecap="round">
+    <path d="M600 455 L665 520"/>
+    <path d="M600 455 L535 520"/>
+  </g>
+
+  <!-- crowd dots -->
+  <g fill="#ffffff" fill-opacity="0.05">
+    <circle cx="240" cy="505" r="3"/><circle cx="275" cy="490" r="3"/><circle cx="312" cy="477" r="3"/>
+    <circle cx="890" cy="490" r="3"/><circle cx="925" cy="505" r="3"/><circle cx="963" cy="520" r="3"/>
+    <circle cx="420" cy="360" r="3"/><circle cx="600" cy="330" r="3"/><circle cx="780" cy="360" r="3"/>
+  </g>
+</svg>
+
