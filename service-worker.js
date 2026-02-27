@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mlb-scoreboard-v12';
+const CACHE_NAME = 'mlb-scoreboard-v13';
 const ASSETS = [
   './',
   './index.html',

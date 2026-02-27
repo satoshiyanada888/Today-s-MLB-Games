@@ -4,22 +4,76 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Today's MLB Games</title>
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MLB Scoreboard">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="header">
-    <h1>Today's MLB Games</h1>
+    <div class="header-art" aria-hidden="true">
+      <svg viewBox="0 0 240 240" class="baseball-hero" role="presentation">
+        <defs>
+          <radialGradient id="bgGlow" cx="30%" cy="30%" r="70%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+            <stop offset="55%" stop-color="#e5e7eb" stop-opacity="0.55"/>
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="0.08"/>
+          </radialGradient>
+        </defs>
+        <circle cx="120" cy="120" r="92" fill="url(#bgGlow)"/>
+        <circle cx="120" cy="120" r="92" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="4"/>
+        <!-- seams -->
+        <path d="M56 70 C 92 98, 92 142, 56 170" fill="none" stroke="#ef4444" stroke-opacity="0.55" stroke-width="6" stroke-linecap="round"/>
+        <path d="M184 70 C 148 98, 148 142, 184 170" fill="none" stroke="#ef4444" stroke-opacity="0.55" stroke-width="6" stroke-linecap="round"/>
+        <!-- stitches left -->
+        <path d="M62 82 l18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M62 100 l18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M62 118 l18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M62 136 l18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M62 154 l18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <!-- stitches right -->
+        <path d="M178 82 l-18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M178 100 l-18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M178 118 l-18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M178 136 l-18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+        <path d="M178 154 l-18 8" stroke="#ef4444" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1 class="app-title">
+      <span class="app-title-icon" aria-hidden="true">
+        <svg viewBox="0 0 64 64" class="baseball-icon" role="presentation">
+          <circle cx="32" cy="32" r="26" fill="#ffffff" fill-opacity="0.92"/>
+          <circle cx="32" cy="32" r="26" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2"/>
+          <path d="M22 18 C 30 24, 30 40, 22 46" fill="none" stroke="#ef4444" stroke-width="2.6" stroke-linecap="round" stroke-opacity="0.9"/>
+          <path d="M42 18 C 34 24, 34 40, 42 46" fill="none" stroke="#ef4444" stroke-width="2.6" stroke-linecap="round" stroke-opacity="0.9"/>
+          <path d="M24 22 l6 3" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
+          <path d="M24 30 l6 3" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
+          <path d="M24 38 l6 3" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
+          <path d="M40 22 l-6 3" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
+          <path d="M40 30 l-6 3" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
+          <path d="M40 38 l-6 3" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
+        </svg>
+      </span>
+      <span class="app-title-text">Today's MLB Games</span>
+    </h1>
     <p class="subtitle" id="date-display"></p>
-    <label class="nickname-toggle-wrap">
-      <input type="checkbox" id="nickname-toggle" class="nickname-toggle">
-      <span class="nickname-toggle-label">愛称で表示</span>
-    </label>
+    <div class="header-controls">
+      <div class="lang-toggle">
+        <button type="button" class="lang-btn lang-btn-active" data-lang="ja">日本語</button>
+        <button type="button" class="lang-btn" data-lang="en">EN</button>
+      </div>
+    </div>
   </header>
 
   <main class="main">
+    <section id="pick-card" class="pick-card"></section>
+    <section id="leaderboard" class="leaderboard" hidden></section>
+    <h2 class="section-title">今日のスコアボード</h2>
     <div id="loading" class="loading">試合データを取得中...</div>
     <div id="error" class="error" hidden></div>
     <div id="no-games" class="no-games" hidden>今日の試合はありません。</div>
@@ -27,9 +81,14 @@
   </main>
 
   <footer class="footer">
-    <p>Data from MLB Stats API · <a href="http://gdx.mlb.com/components/copyright.txt" target="_blank" rel="noopener">MLB Copyright</a></p>
+    <p>
+      Data from MLB Stats API · <a href="http://gdx.mlb.com/components/copyright.txt" target="_blank" rel="noopener">MLB Copyright</a><br>
+      Background photo: <a href="https://unsplash.com/photos/empty-baseball-stadium-on-a-sunny-day-hEwoBGykjIM" target="_blank" rel="noopener">Unsplash</a>
+    </p>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
