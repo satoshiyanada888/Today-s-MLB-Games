@@ -589,6 +589,9 @@ let hypePollTimerId = null;
 let hypePollGamePk = null;
 let hypePollTick = 0;
 let hypePollIntervalMs = 120_000;
+let lastHypeLevel = null;
+let lastHypeVibeAtMs = 0;
+let hypeBumpTimerId = null;
 
 function stopHypePolling() {
   if (hypePollTimerId) {
@@ -598,6 +601,51 @@ function stopHypePolling() {
   hypePollGamePk = null;
   hypePollTick = 0;
   hypePollIntervalMs = 120_000;
+  lastHypeLevel = null;
+  lastHypeVibeAtMs = 0;
+  if (hypeBumpTimerId) {
+    clearTimeout(hypeBumpTimerId);
+    hypeBumpTimerId = null;
+  }
+}
+
+function hypeLevelFromValue(v) {
+  const n = clamp(Number(v) || 0, 0, 100);
+  return n >= 75 ? 'insane' : n >= 50 ? 'hot' : n >= 25 ? 'warm' : 'calm';
+}
+
+function getHypeLevelText(level) {
+  const lv = level || 'calm';
+  if (currentLang === 'en') {
+    if (lv === 'insane') return { label: 'INSANE', flavor: 'This is getting wild.' };
+    if (lv === 'hot') return { label: 'HOT', flavor: 'Momentum is swinging.' };
+    if (lv === 'warm') return { label: 'WARM', flavor: 'It’s heating up.' };
+    return { label: 'CALM', flavor: 'Steady so far.' };
+  }
+  if (lv === 'insane') return { label: '激アツ', flavor: '今、目が離せない。' };
+  if (lv === 'hot') return { label: '熱い', flavor: '流れが動いてる。' };
+  if (lv === 'warm') return { label: 'じわ熱', flavor: '少しずつ盛り上がってきた。' };
+  return { label: '落ち着き', flavor: 'まだ静かな展開。' };
+}
+
+function canUseHaptics() {
+  const reduce =
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return !reduce && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+}
+
+function vibrateForLevel(level) {
+  if (!canUseHaptics()) return;
+  const now = Date.now();
+  if (now - lastHypeVibeAtMs < 25_000) return; // don't spam
+  lastHypeVibeAtMs = now;
+
+  // Keep it short: mobile-friendly, not annoying.
+  if (level === 'insane') navigator.vibrate([30, 40, 30, 40, 60]);
+  else if (level === 'hot') navigator.vibrate([25, 30, 40]);
+  else if (level === 'warm') navigator.vibrate(20);
 }
 
 function getHypeText() {
@@ -631,14 +679,39 @@ function setHypeUI({ value, sub, rightTag, live }) {
   const valEl = wrap.querySelector('#pick-hype-value');
   const subEl = wrap.querySelector('#pick-hype-sub');
   const tagEl = wrap.querySelector('#pick-hype-tag');
+  const stageEl = wrap.querySelector('#pick-hype-stage');
+
+  const nextLevel = hypeLevelFromValue(v);
+  const prevLevel = wrap.dataset.level || null;
+  const levelText = getHypeLevelText(nextLevel);
 
   wrap.dataset.live = live ? 'true' : 'false';
-  wrap.dataset.level = v >= 75 ? 'insane' : v >= 50 ? 'hot' : v >= 25 ? 'warm' : 'calm';
+  wrap.dataset.level = nextLevel;
+  if (root) {
+    root.dataset.hypeLive = live ? 'true' : 'false';
+    root.dataset.hypeLevel = nextLevel;
+  }
 
   if (fill) fill.style.width = `${v}%`;
   if (valEl) valEl.textContent = `${Math.round(v)} / 100`;
   if (subEl) subEl.textContent = sub || '';
   if (tagEl) tagEl.textContent = rightTag || '';
+  if (stageEl) {
+    stageEl.textContent = levelText.label;
+    stageEl.className = `pick-hype-stage pick-hype-stage-${nextLevel}`;
+  }
+
+  // Visual bump when level changes (except calm -> calm)
+  if (prevLevel && prevLevel !== nextLevel) {
+    wrap.classList.remove('hype-bump');
+    // force reflow so animation restarts
+    void wrap.offsetWidth;
+    wrap.classList.add('hype-bump');
+    if (hypeBumpTimerId) clearTimeout(hypeBumpTimerId);
+    hypeBumpTimerId = setTimeout(() => {
+      wrap.classList.remove('hype-bump');
+    }, 450);
+  }
 }
 
 function ensureHypeInterval(ms) {
@@ -735,6 +808,8 @@ async function refreshHypeOnce(gamePk, tick) {
 
     const sample = extractLastWpSample(wp);
     const hypeVal = hypeFromDramaAndLeverage(sample?.dramaIndex ?? null, sample?.leverageIndex ?? null);
+    const hypeLevel = hypeLevelFromValue(hypeVal == null ? 0 : hypeVal);
+    const levelText = getHypeLevelText(hypeLevel);
 
     const inning = feed?.liveData?.linescore?.currentInning ?? sample?.inning ?? null;
     const state = feed?.liveData?.linescore?.inningState ?? '';
@@ -767,7 +842,7 @@ async function refreshHypeOnce(gamePk, tick) {
       setHypeUI({
         value: 0,
         rightTag: phaseText,
-        sub: [inningText, t.waiting].filter(Boolean).join(' · '),
+        sub: [levelText.flavor, inningText, t.waiting].filter(Boolean).join(' · '),
         live: false,
       });
       return;
@@ -777,7 +852,7 @@ async function refreshHypeOnce(gamePk, tick) {
       setHypeUI({
         value: 0,
         rightTag: phaseText,
-        sub: [inningText, wpText || t.noData].filter(Boolean).join(' · '),
+        sub: [levelText.flavor, inningText, wpText || t.noData].filter(Boolean).join(' · '),
         live: isLive,
       });
       return;
@@ -786,9 +861,24 @@ async function refreshHypeOnce(gamePk, tick) {
     setHypeUI({
       value: hypeVal,
       rightTag: phaseText,
-      sub: [inningText, wpText].filter(Boolean).join(' · '),
+      sub: [levelText.flavor, inningText, wpText].filter(Boolean).join(' · '),
       live: isLive,
     });
+
+    // Haptics only when the level goes up during live play.
+    if (isLive) {
+      const prev = lastHypeLevel;
+      lastHypeLevel = hypeLevel;
+      const order = { calm: 0, warm: 1, hot: 2, insane: 3 };
+      if (prev && order[hypeLevel] > order[prev]) {
+        vibrateForLevel(hypeLevel);
+      }
+      if (!prev) {
+        lastHypeLevel = hypeLevel;
+      }
+    } else {
+      lastHypeLevel = hypeLevel;
+    }
 
     if (isFinalLike) stopHypePolling();
   } catch (_) {
@@ -940,6 +1030,9 @@ function renderPickCard() {
 
   // カード全体の光り方
   container.className = 'pick-card';
+  // default hype state (will be updated by setHypeUI)
+  container.dataset.hypeLive = 'false';
+  container.dataset.hypeLevel = 'calm';
   if (hasPick && final && winner) {
     const hit = pickedSide === winner;
     container.classList.add(hit ? 'pick-card-hit' : 'pick-card-miss');
@@ -994,6 +1087,7 @@ function renderPickCard() {
         <div class="pick-hype-title">${getHypeText().title}</div>
         <div class="pick-hype-right">
           <span class="pick-hype-tag" id="pick-hype-tag"></span>
+          <span class="pick-hype-stage pick-hype-stage-calm" id="pick-hype-stage">${getHypeLevelText('calm').label}</span>
           <span class="pick-hype-value" id="pick-hype-value">-- / 100</span>
         </div>
       </div>

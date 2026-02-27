@@ -256,6 +256,73 @@ body {
   flex-direction: column;
   justify-content: flex-start;
   gap: 0.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Hype-driven card glow (subtle base) */
+.pick-card::before {
+  content: '';
+  position: absolute;
+  inset: -40px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
+  background: radial-gradient(circle at 20% 0%, rgba(96, 165, 250, 0.18), transparent 55%),
+    radial-gradient(circle at 80% 0%, rgba(52, 211, 153, 0.12), transparent 55%);
+}
+
+.pick-card[data-hype-level="warm"]::before,
+.pick-card[data-hype-level="hot"]::before,
+.pick-card[data-hype-level="insane"]::before {
+  opacity: 1;
+}
+
+.pick-card[data-hype-level="warm"] {
+  border-color: rgba(252, 211, 77, 0.38);
+  box-shadow:
+    0 0 0 1px rgba(252, 211, 77, 0.16),
+    0 14px 30px rgba(0, 0, 0, 0.35),
+    0 0 22px rgba(252, 211, 77, 0.12);
+}
+
+.pick-card[data-hype-level="hot"] {
+  border-color: rgba(249, 115, 22, 0.46);
+  box-shadow:
+    0 0 0 1px rgba(249, 115, 22, 0.18),
+    0 14px 30px rgba(0, 0, 0, 0.35),
+    0 0 28px rgba(239, 68, 68, 0.14);
+}
+
+.pick-card[data-hype-level="insane"] {
+  border-color: rgba(167, 139, 250, 0.52);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.22),
+    0 14px 30px rgba(0, 0, 0, 0.35),
+    0 0 34px rgba(167, 139, 250, 0.18),
+    0 0 38px rgba(239, 68, 68, 0.12);
+}
+
+/* Live-only pulse on the card (keep it tasteful; insane gets stronger) */
+.pick-card[data-hype-live="true"][data-hype-level="hot"],
+.pick-card[data-hype-live="true"][data-hype-level="insane"] {
+  animation: hypeCardPulse 1.9s ease-in-out infinite;
+}
+
+.pick-card[data-hype-live="true"][data-hype-level="insane"] {
+  animation-duration: 1.35s;
+}
+
+@keyframes hypeCardPulse {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+  100% { transform: translateY(0); }
+}
+
+/* HIT/MISS should still win visually */
+.pick-card.pick-card-hit,
+.pick-card.pick-card-miss {
+  animation: none;
 }
 
 .pick-label {
@@ -504,6 +571,24 @@ body {
   color: rgba(229, 231, 235, 0.92);
 }
 
+.pick-hype-stage {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(2, 6, 23, 0.35);
+  text-transform: uppercase;
+}
+
+.pick-hype-stage-calm { color: #93c5fd; border-color: rgba(147, 197, 253, 0.35); }
+.pick-hype-stage-warm { color: #fcd34d; border-color: rgba(252, 211, 77, 0.35); }
+.pick-hype-stage-hot { color: #fb7185; border-color: rgba(251, 113, 133, 0.35); }
+.pick-hype-stage-insane { color: #c4b5fd; border-color: rgba(196, 181, 253, 0.35); }
+
 .pick-hype-bar {
   height: 10px;
   border-radius: 999px;
@@ -524,9 +609,75 @@ body {
   transition: width 0.35s ease-out;
 }
 
+.pick-hype[data-level="calm"] .pick-hype-fill {
+  background: linear-gradient(90deg, #60a5fa 0%, #34d399 100%);
+  box-shadow: 0 0 10px rgba(96, 165, 250, 0.18);
+}
+
+.pick-hype[data-level="warm"] .pick-hype-fill {
+  background: linear-gradient(90deg, #60a5fa 0%, #34d399 50%, #fbbf24 100%);
+  box-shadow:
+    0 0 12px rgba(251, 191, 36, 0.18),
+    0 0 14px rgba(52, 211, 153, 0.16);
+}
+
+.pick-hype[data-level="hot"] .pick-hype-fill {
+  background: linear-gradient(90deg, #34d399 0%, #f97316 55%, #ef4444 100%);
+  box-shadow:
+    0 0 14px rgba(248, 113, 113, 0.28),
+    0 0 18px rgba(249, 115, 22, 0.18);
+}
+
+.pick-hype[data-level="insane"] .pick-hype-fill {
+  background: linear-gradient(90deg, #f97316 0%, #ef4444 40%, #a78bfa 100%);
+  box-shadow:
+    0 0 18px rgba(167, 139, 250, 0.22),
+    0 0 22px rgba(248, 113, 113, 0.25);
+}
+
+.pick-hype[data-level="insane"] {
+  background: radial-gradient(circle at 30% 0%, rgba(167, 139, 250, 0.12), transparent 60%);
+  border-radius: 12px;
+  padding: 0.7rem 0.75rem 0.6rem;
+  margin-left: -0.15rem;
+  margin-right: -0.15rem;
+}
+
+.pick-hype[data-level="hot"] {
+  background: radial-gradient(circle at 30% 0%, rgba(249, 115, 22, 0.11), transparent 62%);
+  border-radius: 12px;
+  padding: 0.7rem 0.75rem 0.6rem;
+  margin-left: -0.15rem;
+  margin-right: -0.15rem;
+}
+
 .pick-hype[data-live="true"][data-level="hot"] .pick-hype-fill,
 .pick-hype[data-live="true"][data-level="insane"] .pick-hype-fill {
   animation: hypePulse 1.6s ease-in-out infinite;
+}
+
+.pick-hype.hype-bump {
+  animation: hypeBump 0.42s ease-out 1;
+}
+
+@keyframes hypeBump {
+  0% { transform: translateX(0) scale(1); }
+  25% { transform: translateX(-3px) scale(1.01); }
+  50% { transform: translateX(3px) scale(1.02); }
+  75% { transform: translateX(-2px) scale(1.01); }
+  100% { transform: translateX(0) scale(1); }
+}
+
+.pick-hype[data-live="true"][data-level="insane"] .pick-hype-bar {
+  animation: hypeRumble 0.9s linear infinite;
+}
+
+@keyframes hypeRumble {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-0.5px); }
+  50% { transform: translateX(0.5px); }
+  75% { transform: translateX(-0.5px); }
+  100% { transform: translateX(0); }
 }
 
 @keyframes hypePulse {
@@ -539,6 +690,20 @@ body {
   margin-top: 0.45rem;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pick-card[data-hype-live="true"][data-hype-level="hot"],
+  .pick-card[data-hype-live="true"][data-hype-level="insane"] {
+    animation: none !important;
+  }
+
+  .pick-hype[data-live="true"][data-level="hot"] .pick-hype-fill,
+  .pick-hype[data-live="true"][data-level="insane"] .pick-hype-fill,
+  .pick-hype.hype-bump,
+  .pick-hype[data-live="true"][data-level="insane"] .pick-hype-bar {
+    animation: none !important;
+  }
 }
 
 .pick-result-badge {
