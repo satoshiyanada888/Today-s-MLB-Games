@@ -3,6 +3,7 @@ const API_BASE_V11 = 'https://statsapi.mlb.com/api/v1.1';
 const SPORT_ID = 1; // MLB
 let currentLang = 'ja'; // 'ja' or 'en'
 const PICK_STORAGE_PREFIX = 'mlb-pick-';
+const ONE_PLAY_STORAGE_PREFIX = 'mlb-oneplay-';
 const IS_DEBUG = window.location.search.includes('debug=1');
 const SUPABASE_URL = window.APP_CONFIG?.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
@@ -584,6 +585,14 @@ function showGamesList(show) {
 let cachedGames = [];
 let pickGame = null;
 let pickSelection = null;
+let onePlayState = null;
+let onePlayTimerId = null;
+let onePlayPollTick = 0;
+
+let moments = [];
+let momentLastWpAtBatIndex = null;
+let momentLastHomeWP = null;
+let momentLastAddedAtMs = 0;
 
 let hypePollTimerId = null;
 let hypePollGamePk = null;
@@ -592,7 +601,9 @@ let hypePollIntervalMs = 120_000;
 let lastHypeLevel = null;
 let lastHypeVibeAtMs = 0;
 let hypeBumpTimerId = null;
-let hypeDemoState = null; // { level: 'calm'|'warm'|'hot'|'insane', live: boolean } | null
+let hypeDemoState = null; // { mode: 'manual'|'auto', level: 'calm'|'warm'|'hot'|'insane', live: boolean } | null
+let hypeDemoAutoTimerId = null;
+let hypeDemoAutoStep = 0;
 
 function stopHypePolling() {
   if (hypePollTimerId) {
@@ -608,6 +619,43 @@ function stopHypePolling() {
     clearTimeout(hypeBumpTimerId);
     hypeBumpTimerId = null;
   }
+}
+
+function stopHypeDemoAuto() {
+  if (hypeDemoAutoTimerId) {
+    clearInterval(hypeDemoAutoTimerId);
+    hypeDemoAutoTimerId = null;
+  }
+}
+
+function tickHypeDemoAuto() {
+  const seq = ['calm', 'warm', 'hot', 'insane', 'hot', 'warm'];
+  const level = seq[hypeDemoAutoStep % seq.length];
+  const live = Boolean(hypeDemoState?.live ?? true);
+  const t = getHypeText();
+  const levelText = getHypeLevelText(level);
+  const wobble = hypeDemoAutoStep % 2 === 0 ? 6 : -5;
+  const value = clamp(demoValueForLevel(level) + wobble, 0, 100);
+
+  // Keep demo state in sync so Toggle LIVE works.
+  hypeDemoState = { mode: 'auto', level, live };
+  setHypeUI({
+    value,
+    rightTag: `AUTO ${hypeDemoAutoStep + 1}`,
+    sub: `${levelText.flavor} · ${currentLang === 'en' ? 'Auto demo' : '自動デモ'}`,
+    live,
+  });
+
+  hypeDemoAutoStep++;
+}
+
+function startHypeDemoAuto() {
+  stopHypePolling();
+  stopHypeDemoAuto();
+  hypeDemoAutoStep = 0;
+  hypeDemoState = { mode: 'auto', level: hypeDemoState?.level || 'calm', live: true };
+  tickHypeDemoAuto();
+  hypeDemoAutoTimerId = setInterval(tickHypeDemoAuto, 1100);
 }
 
 function hypeLevelFromValue(v) {
@@ -658,8 +706,9 @@ function demoValueForLevel(level) {
 
 function applyHypeDemo(level, live) {
   const lv = level || 'calm';
-  hypeDemoState = { level: lv, live: Boolean(live) };
+  hypeDemoState = { mode: 'manual', level: lv, live: Boolean(live) };
   stopHypePolling();
+  stopHypeDemoAuto();
   const t = getHypeText();
   const levelText = getHypeLevelText(lv);
   setHypeUI({
@@ -672,6 +721,7 @@ function applyHypeDemo(level, live) {
 
 function clearHypeDemo() {
   hypeDemoState = null;
+  stopHypeDemoAuto();
 }
 
 function getHypeText() {
@@ -792,6 +842,12 @@ function extractLastWpSample(arr) {
       leverageIndex: Number.isFinite(lev) ? lev : null,
       inning: p?.about?.inning ?? null,
       half: p?.about?.halfInning ?? null,
+      atBatIndex: Number.isFinite(Number(p?.atBatIndex))
+        ? Number(p.atBatIndex)
+        : Number.isFinite(Number(p?.about?.atBatIndex))
+          ? Number(p.about.atBatIndex)
+          : null,
+      description: String(p?.result?.description || ''),
     };
   }
   return null;
@@ -808,6 +864,168 @@ function hypeFromDramaAndLeverage(dramaIndex, leverageIndex) {
   if (dScore != null && lScore == null) return dScore;
   if (dScore == null && lScore != null) return lScore;
   return dScore * 0.7 + lScore * 0.3;
+}
+
+function getMomentText() {
+  if (currentLang === 'en') {
+    return {
+      title: 'Moments',
+      hint: 'Swipe the spikes. Tap to reveal.',
+      spike: 'SPIKE',
+      reveal: 'Tap to reveal',
+    };
+  }
+  return {
+    title: 'モーメント',
+    hint: '盛り上がりの瞬間をスワイプ。タップでネタバレ解除。',
+    spike: '急変',
+    reveal: 'タップで詳細',
+  };
+}
+
+function ensureMomentsLoaded() {
+  if (moments && moments.length) return;
+  try {
+    const raw = localStorage.getItem(`mlb-moments-${getTodayISO()}`);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (Array.isArray(data)) moments = data.slice(0, 25);
+  } catch (_) {}
+}
+
+function persistMoments() {
+  try {
+    localStorage.setItem(`mlb-moments-${getTodayISO()}`, JSON.stringify(moments.slice(0, 25)));
+  } catch (_) {}
+}
+
+function addMoment(m) {
+  ensureMomentsLoaded();
+  moments = [m, ...(moments || [])].slice(0, 25);
+  persistMoments();
+  renderMomentFeed();
+}
+
+function formatHalf(half) {
+  const h = String(half || '');
+  if (!h) return '';
+  if (currentLang === 'en') return h.toUpperCase();
+  return h === 'top' ? '表' : h === 'bottom' ? '裏' : h;
+}
+
+function maybeAddMomentFromWp(feed, sample, hypeVal, hypeLevel, isLive) {
+  if (!isLive) return;
+  if (!sample) return;
+  const now = Date.now();
+  const atBat = sample.atBatIndex;
+  if (atBat == null) return;
+  if (momentLastWpAtBatIndex === atBat) return;
+  momentLastWpAtBatIndex = atBat;
+
+  const prev = momentLastHomeWP;
+  const home = sample.homeWP;
+  if (typeof home === 'number') momentLastHomeWP = home;
+
+  const delta = prev != null && home != null ? Math.abs(home - prev) : 0;
+  const drama = sample.dramaIndex ?? 0;
+  const lev = sample.leverageIndex ?? 0;
+
+  const isSpike = delta >= 6 || drama >= 120 || lev >= 2.8 || hypeLevel === 'insane';
+  if (!isSpike) return;
+  if (now - momentLastAddedAtMs < 20_000) return;
+  momentLastAddedAtMs = now;
+
+  const mt = getMomentText();
+  const inning = feed?.liveData?.linescore?.currentInning ?? sample.inning ?? null;
+  const half = sample.half || '';
+
+  const headline =
+    delta >= 6
+      ? currentLang === 'en'
+        ? `WIN PROB SWING +${Math.round(delta)}%`
+        : `勝率急変 +${Math.round(delta)}%`
+      : currentLang === 'en'
+        ? `DRAMA ${Math.round(drama)}`
+        : `ドラマ指数 ${Math.round(drama)}`;
+
+  const sub =
+    inning != null
+      ? currentLang === 'en'
+        ? `Inning ${inning} · ${String(half).toUpperCase()} · ${mt.spike}`
+        : `${inning}回${formatHalf(half)} · ${mt.spike}`
+      : mt.spike;
+
+  addMoment({
+    id: `${getTodayISO()}:${hypePollGamePk || ''}:${atBat}:${now}`,
+    ts: new Date().toISOString(),
+    level: hypeLevel,
+    headline,
+    sub,
+    reveal: sample.description || (currentLang === 'en' ? 'Play details' : 'プレー詳細'),
+    revealed: false,
+  });
+}
+
+function renderMomentFeed() {
+  const el = document.getElementById('moment-feed');
+  if (!el) return;
+  ensureMomentsLoaded();
+  const list = Array.isArray(moments) ? moments : [];
+  if (!list.length) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+
+  const t = getMomentText();
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="moment-feed-head">
+      <div class="moment-feed-title">${t.title}</div>
+      <div class="moment-feed-hint">${t.hint}</div>
+    </div>
+    <div class="moment-scroller" id="moment-scroller">
+      ${list
+        .map((m) => {
+          const lvl = m.level || 'calm';
+          const revealed = m.revealed ? 'true' : 'false';
+          return `
+            <article class="moment-card" data-id="${m.id}" data-level="${lvl}" data-revealed="${revealed}">
+              <div class="moment-top">
+                <div class="moment-tag">
+                  <span class="moment-pill">${lvl.toUpperCase()}</span>
+                </div>
+                <div class="moment-pill">${new Date(m.ts).toLocaleTimeString(currentLang === 'en' ? 'en-US' : 'ja-JP', { hour: '2-digit', minute: '2-digit' })}</div>
+              </div>
+              <div class="moment-body">
+                <h3 class="moment-headline">${m.headline}</h3>
+                <div class="moment-subline">${m.sub}</div>
+                <div class="moment-reveal">${m.reveal}</div>
+              </div>
+              <div class="moment-footer">
+                <div>${t.reveal}</div>
+                <div class="moment-cta">${currentLang === 'en' ? 'Tap' : 'タップ'}</div>
+              </div>
+            </article>
+          `;
+        })
+        .join('')}
+    </div>
+  `;
+
+  const scroller = el.querySelector('#moment-scroller');
+  if (!scroller) return;
+  scroller.querySelectorAll('.moment-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const id = card.getAttribute('data-id');
+      if (!id) return;
+      const idx = moments.findIndex((x) => x && x.id === id);
+      if (idx < 0) return;
+      moments[idx].revealed = !moments[idx].revealed;
+      persistMoments();
+      card.setAttribute('data-revealed', moments[idx].revealed ? 'true' : 'false');
+    });
+  });
 }
 
 async function refreshHypeOnce(gamePk, tick) {
@@ -891,6 +1109,8 @@ async function refreshHypeOnce(gamePk, tick) {
       live: isLive,
     });
 
+    maybeAddMomentFromWp(feed, sample, hypeVal == null ? 0 : hypeVal, hypeLevel, isLive);
+
     // Haptics only when the level goes up during live play.
     if (isLive) {
       const prev = lastHypeLevel;
@@ -927,6 +1147,479 @@ function initHypeForPick(gamePk) {
 
 function getTodayStorageKey() {
   return `${PICK_STORAGE_PREFIX}${getTodayParam()}`;
+}
+
+function getOnePlayStorageKey() {
+  return `${ONE_PLAY_STORAGE_PREFIX}${getTodayParam()}`;
+}
+
+function loadOnePlayState() {
+  try {
+    const raw = localStorage.getItem(getOnePlayStorageKey());
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object') return null;
+    // Old format used "other" which was too broad; reset to avoid weird behavior.
+    if (data.choice === 'other') return null;
+    if (data.actual === 'other') data.actual = 'unknown';
+    // Ensure options exist for polling; otherwise fill deterministically.
+    if (!Array.isArray(data.options) || data.options.length !== 4) {
+      const date = String(data.date || getTodayISO());
+      const gamePk = Number(data.gamePk);
+      if (gamePk) {
+        data.options = buildOnePlayOptions(date, gamePk);
+      }
+    }
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveOnePlayState(state) {
+  onePlayState = state;
+  try {
+    localStorage.setItem(getOnePlayStorageKey(), JSON.stringify(state || null));
+  } catch (_) {}
+}
+
+function stopOnePlayPolling() {
+  if (onePlayTimerId) {
+    clearInterval(onePlayTimerId);
+    onePlayTimerId = null;
+  }
+  onePlayPollTick = 0;
+}
+
+function startOnePlayPolling(gamePk) {
+  if (!gamePk) return;
+  stopOnePlayPolling();
+  onePlayPollTick++;
+  const tick = onePlayPollTick;
+  refreshOnePlayOnce(gamePk, tick);
+  onePlayTimerId = setInterval(() => {
+    onePlayPollTick++;
+    refreshOnePlayOnce(gamePk, onePlayPollTick);
+  }, 12_000);
+}
+
+function classifyOnePlay(play) {
+  if (!play || typeof play !== 'object') return 'other';
+  const eventType = String(play?.result?.eventType || '').toLowerCase();
+
+  // HR takes priority (it's also a scoring play)
+  if (eventType === 'home_run' || eventType.includes('home_run')) return 'hr';
+
+  // Stolen bases sometimes appear as separate action plays or inside playEvents
+  if (eventType.includes('stolen')) return 'sb';
+  const evs = Array.isArray(play?.playEvents) ? play.playEvents : [];
+  for (const ev of evs) {
+    const et = String(ev?.details?.eventType || '').toLowerCase();
+    if (et.includes('stolen')) return 'sb';
+  }
+
+  if (eventType.includes('strikeout')) return 'k';
+  if (eventType.includes('walk') || eventType === 'hit_by_pitch' || eventType.includes('hit_by_pitch')) return 'bb';
+  if (eventType === 'single' || eventType === 'double' || eventType === 'triple') return 'hit';
+  if (eventType.includes('double_play') || eventType === 'grounded_into_double_play') return 'dp';
+  if (eventType.includes('error')) return 'error';
+  if (eventType.includes('sac')) return 'sac';
+
+  // Runs (non-HR scoring)
+  if (play?.about?.isScoringPlay) return 'run';
+
+  // Outs (generic)
+  if (play?.result?.isOut) return 'out';
+
+  return 'unknown';
+}
+
+function getOnePlayText() {
+  if (currentLang === 'en') {
+    return {
+      label: "Today's one play",
+      title: 'What happens next?',
+      hintLive: 'Pick the next event. (Once per day)',
+      hintNotLive: 'Available during the game.',
+      hintNoContest: 'If the next play is out of scope, it will be a no-contest and we keep waiting.',
+      btnRun: 'RUN',
+      btnHr: 'HR',
+      btnSb: 'SB',
+      btnHit: 'HIT',
+      btnBb: 'BB/HBP',
+      btnK: 'K',
+      btnOut: 'OUT',
+      btnDp: 'DP',
+      btnErr: 'ERROR',
+      waiting: 'Waiting for the next play...',
+      decided: 'Next event:',
+      hit: 'HIT!',
+      miss: 'MISS',
+      noContest: 'NO CONTEST',
+      outOfScope: 'Out of scope',
+      badge: 'Badge',
+    };
+  }
+  return {
+    label: '今日の一球',
+    title: '次に起きるのは？',
+    hintLive: '次のイベントを予想！（1日1回）',
+    hintNotLive: '試合中に遊べます。',
+    hintNoContest: '次のプレーが選択肢に無い場合は「ノーカン」扱いで、次のプレーまで待ち続けます。',
+    btnRun: '得点',
+    btnHr: 'HR',
+    btnSb: '盗塁',
+    btnHit: '安打',
+    btnBb: '四死球',
+    btnK: '三振',
+    btnOut: '凡打',
+    btnDp: '併殺',
+    btnErr: '失策',
+    waiting: '次のプレーを待機中...',
+    decided: '次のイベント：',
+    hit: '的中！',
+    miss: 'ハズレ…',
+    noContest: 'ノーカン',
+    outOfScope: '対象外',
+    badge: 'バッジ',
+  };
+}
+
+function labelForOnePlayType(type) {
+  const t = getOnePlayText();
+  if (type === 'run') return t.btnRun;
+  if (type === 'hr') return t.btnHr;
+  if (type === 'sb') return t.btnSb;
+  if (type === 'hit') return t.btnHit;
+  if (type === 'bb') return t.btnBb;
+  if (type === 'k') return t.btnK;
+  if (type === 'out') return t.btnOut;
+  if (type === 'dp') return t.btnDp;
+  if (type === 'error') return t.btnErr;
+  if (type === 'sac') return currentLang === 'en' ? 'SAC' : '犠打/犠飛';
+  return currentLang === 'en' ? 'UNKNOWN' : '不明';
+}
+
+function badgeForOnePlay(type) {
+  // light, fun; no backend yet
+  if (currentLang === 'en') {
+    if (type === 'hr') return 'SLUGGER';
+    if (type === 'sb') return 'SPEED';
+    if (type === 'run') return 'CLUTCH';
+    if (type === 'k') return 'NASTY';
+    if (type === 'bb') return 'EYE';
+    if (type === 'hit') return 'CONTACT';
+    if (type === 'dp') return 'SNIPE';
+    if (type === 'error') return 'CHAOS';
+    return 'READ';
+  }
+  if (type === 'hr') return '強打者';
+  if (type === 'sb') return '俊足';
+  if (type === 'run') return '勝負勘';
+  if (type === 'k') return '奪三振';
+  if (type === 'bb') return '選球眼';
+  if (type === 'hit') return '職人';
+  if (type === 'dp') return '仕留め';
+  if (type === 'error') return 'カオス';
+  return '読み';
+}
+
+function buildOnePlayOptions(date, gamePk) {
+  // Deterministic per day+game so the same user sees consistent options.
+  const rand = seededRand(`${date}:${gamePk}:oneplay-options`);
+  const frequent = ['out', 'hit', 'bb', 'k', 'run'];
+  const spicy = ['hr', 'sb', 'dp', 'error'];
+
+  const pickUnique = (pool, n, used) => {
+    const arr = [];
+    let guard = 0;
+    while (arr.length < n && guard < 60) {
+      guard++;
+      const idx = Math.floor(rand() * pool.length);
+      const v = pool[idx];
+      if (used.has(v)) continue;
+      used.add(v);
+      arr.push(v);
+    }
+    return arr;
+  };
+
+  const used = new Set();
+  const opts = [...pickUnique(frequent, 2, used), ...pickUnique(spicy, 2, used)];
+  if (opts.length < 4) {
+    const all = [...frequent, ...spicy];
+    opts.push(...pickUnique(all, 4 - opts.length, used));
+  }
+
+  // Shuffle deterministically so placement isn't always the same.
+  for (let i = opts.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [opts[i], opts[j]] = [opts[j], opts[i]];
+  }
+  return opts.slice(0, 4);
+}
+
+function getLastCompletedAtBatIndex(feed) {
+  const plays = feed?.liveData?.plays?.allPlays;
+  if (!Array.isArray(plays) || plays.length === 0) return -1;
+  for (let i = plays.length - 1; i >= 0; i--) {
+    const p = plays[i];
+    if (p?.about?.isComplete && Number.isFinite(Number(p?.about?.atBatIndex))) {
+      return Number(p.about.atBatIndex);
+    }
+  }
+  return -1;
+}
+
+function findNextCompletedPlay(feed, baselineAtBatIndex) {
+  const plays = feed?.liveData?.plays?.allPlays;
+  if (!Array.isArray(plays) || plays.length === 0) return null;
+  const base = Number(baselineAtBatIndex);
+  for (const p of plays) {
+    const idx = Number(p?.about?.atBatIndex);
+    if (!Number.isFinite(idx)) continue;
+    if (idx <= base) continue;
+    if (!p?.about?.isComplete) continue;
+    return p;
+  }
+  return null;
+}
+
+async function refreshOnePlayOnce(gamePk, tick) {
+  try {
+    if (!onePlayState || onePlayState?.gamePk !== gamePk) return;
+    if (onePlayState?.decided) {
+      stopOnePlayPolling();
+      return;
+    }
+
+    const feed = await fetchLiveFeedV11(gamePk);
+    if (tick !== onePlayPollTick) return;
+
+    const nextPlay = findNextCompletedPlay(feed, onePlayState.baselineAtBatIndex);
+    if (!nextPlay) return;
+
+    const actual = classifyOnePlay(nextPlay);
+    const choice = onePlayState.choice;
+    let options = Array.isArray(onePlayState.options) ? onePlayState.options : [];
+    if (options.length !== 4) {
+      options = buildOnePlayOptions(String(onePlayState.date || getTodayISO()), gamePk);
+      saveOnePlayState({ ...onePlayState, options });
+    }
+
+    // If the play doesn't match any offered option, it's a no-contest: advance baseline and keep waiting.
+    if (!options.includes(actual)) {
+      const idx = Number(nextPlay?.about?.atBatIndex);
+      saveOnePlayState({
+        ...onePlayState,
+        baselineAtBatIndex: Number.isFinite(idx) ? idx : onePlayState.baselineAtBatIndex,
+        skipped: Number(onePlayState.skipped || 0) + 1,
+        lastNoContestActual: actual,
+        lastNoContestDesc: String(nextPlay?.result?.description || ''),
+      });
+      renderOnePlayCard();
+      return;
+    }
+
+    const hit = actual === choice;
+    saveOnePlayState({
+      ...onePlayState,
+      decided: true,
+      actual,
+      outcome: hit ? 'hit' : 'miss',
+      decidedAt: new Date().toISOString(),
+      badge: hit ? badgeForOnePlay(choice) : null,
+    });
+
+    renderOnePlayCard();
+    stopOnePlayPolling();
+  } catch (_) {
+    // ignore
+  }
+}
+
+function renderOnePlayCard() {
+  const el = document.getElementById('one-play-card');
+  if (!el) return;
+
+  const t = getOnePlayText();
+
+  if (!pickGame) {
+    stopOnePlayPolling();
+    el.innerHTML =
+      currentLang === 'en'
+        ? '<div class="one-play-sub">No game to play today.</div>'
+        : '<div class="one-play-sub">今日は遊べる試合がありません。</div>';
+    return;
+  }
+
+  if (!onePlayState) {
+    onePlayState = loadOnePlayState();
+  }
+
+  const gamePk = pickGame.gamePk;
+  if (onePlayState && onePlayState.gamePk && onePlayState.gamePk !== gamePk) {
+    // Picked a different game previously; reset.
+    saveOnePlayState(null);
+    onePlayState = null;
+  }
+
+  const liveHint = t.hintLive;
+  const notLiveHint = t.hintNotLive;
+
+  // We'll consider it "live mode" if hype polling marks it live OR if user is in debug demo live.
+  const isLiveLike = document.getElementById('pick-card')?.dataset?.hypeLive === 'true';
+  const canPick = !onePlayState;
+  const optionSet =
+    onePlayState?.options && Array.isArray(onePlayState.options) && onePlayState.options.length === 4
+      ? onePlayState.options
+      : buildOnePlayOptions(getTodayISO(), gamePk);
+
+  const statusParts = [];
+  let cardCls = 'one-play-card';
+  if (onePlayState?.decided) {
+    cardCls += onePlayState.outcome === 'hit' ? ' one-play-hit' : ' one-play-miss';
+  }
+
+  const choiceLabel = onePlayState ? labelForOnePlayType(onePlayState.choice) : '';
+  const actualLabel = onePlayState?.actual ? labelForOnePlayType(onePlayState.actual) : '';
+  const lastNcLabel = onePlayState?.lastNoContestActual
+    ? labelForOnePlayType(onePlayState.lastNoContestActual)
+    : '';
+
+  let pillHtml = '';
+  if (onePlayState?.decided) {
+    const hit = onePlayState.outcome === 'hit';
+    pillHtml += `<span class="one-play-pill ${hit ? 'hit' : 'miss'}">${hit ? t.hit : t.miss}</span>`;
+    if (hit && onePlayState.badge) {
+      pillHtml += `<span class="one-play-pill badge">${t.badge}: ${onePlayState.badge}</span>`;
+    }
+    statusParts.push(`${t.decided} ${actualLabel}`);
+  } else if (onePlayState) {
+    statusParts.push(currentLang === 'en' ? `Your pick: ${choiceLabel}` : `あなたの予想：${choiceLabel}`);
+    statusParts.push(t.waiting);
+    if (Number(onePlayState.skipped || 0) > 0 && lastNcLabel) {
+      statusParts.push(`${t.outOfScope}: ${lastNcLabel} → ${t.noContest}`);
+    }
+  } else {
+    statusParts.push(isLiveLike ? liveHint : notLiveHint);
+  }
+
+  el.className = cardCls;
+  el.innerHTML = `
+    <div class="one-play-burst" aria-hidden="true"></div>
+    <div class="one-play-label">${t.label}</div>
+    <div class="one-play-title">
+      <span>${t.title}</span>
+      <span class="one-play-pill">${isLiveLike ? 'LIVE' : ''}</span>
+    </div>
+    <p class="one-play-sub">${isLiveLike ? liveHint : notLiveHint}<br>${t.hintNoContest}</p>
+    <div class="one-play-grid">
+      ${optionSet
+        .map(
+          (opt) =>
+            `<button type="button" class="one-play-btn" data-oneplay="${opt}" ${
+              !isLiveLike || !canPick ? 'disabled' : ''
+            }>${labelForOnePlayType(opt)}</button>`
+        )
+        .join('')}
+    </div>
+    <div class="one-play-status">
+      ${pillHtml}
+      <span>${statusParts.filter(Boolean).join(' · ')}</span>
+    </div>
+    ${
+      IS_DEBUG
+        ? `<div class="pick-debug" style="margin-top:0.55rem">
+            <button type="button" class="pick-debug-btn" data-oneplay-force="run">Force RUN</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="hr">Force HR</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="sb">Force SB</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="hit">Force HIT</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="bb">Force BB/HBP</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="k">Force K</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="out">Force OUT</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="dp">Force DP</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-force="error">Force ERROR</button>
+            <button type="button" class="pick-debug-btn" data-oneplay-reset="1">Reset</button>
+          </div>`
+        : ''
+    }
+  `;
+
+  if (!isLiveLike) return;
+
+  const btns = el.querySelectorAll('[data-oneplay]');
+  btns.forEach((b) => {
+    b.addEventListener('click', async () => {
+      if (onePlayState) return;
+      const choice = b.getAttribute('data-oneplay');
+      if (!choice) return;
+
+      // Snapshot current baseline, then start watching for the next completed play.
+      try {
+        const feed = await fetchLiveFeedV11(gamePk);
+        const baseline = getLastCompletedAtBatIndex(feed);
+        saveOnePlayState({
+          date: getTodayISO(),
+          gamePk,
+          options: optionSet,
+          choice,
+          baselineAtBatIndex: baseline,
+          decided: false,
+          skipped: 0,
+        });
+        renderOnePlayCard();
+        startOnePlayPolling(gamePk);
+      } catch (_) {
+        // ignore
+      }
+    });
+  });
+
+  if (IS_DEBUG) {
+    const reset = el.querySelector('[data-oneplay-reset="1"]');
+    if (reset) {
+      reset.addEventListener('click', () => {
+        saveOnePlayState(null);
+        stopOnePlayPolling();
+        renderOnePlayCard();
+      });
+    }
+    const forceBtns = el.querySelectorAll('[data-oneplay-force]');
+    forceBtns.forEach((b) => {
+      b.addEventListener('click', () => {
+        if (!onePlayState || onePlayState.decided) return;
+        const actual = b.getAttribute('data-oneplay-force') || 'unknown';
+        const options = Array.isArray(onePlayState.options) ? onePlayState.options : [];
+        if (!options.includes(actual)) {
+          saveOnePlayState({
+            ...onePlayState,
+            skipped: Number(onePlayState.skipped || 0) + 1,
+            lastNoContestActual: actual,
+            lastNoContestDesc: '(debug)',
+          });
+          renderOnePlayCard();
+          return;
+        }
+        const hit = actual === onePlayState.choice;
+        saveOnePlayState({
+          ...onePlayState,
+          decided: true,
+          actual,
+          outcome: hit ? 'hit' : 'miss',
+          decidedAt: new Date().toISOString(),
+          badge: hit ? badgeForOnePlay(onePlayState.choice) : null,
+        });
+        renderOnePlayCard();
+        stopOnePlayPolling();
+      });
+    });
+  }
+
+  // Resume polling if a pick exists and not decided yet.
+  if (onePlayState && !onePlayState.decided && onePlayState.gamePk === gamePk) {
+    startOnePlayPolling(gamePk);
+  }
 }
 
 function choosePickGame(games) {
@@ -1043,9 +1736,8 @@ function renderPickCard() {
         b.addEventListener('click', () => {
           const mode = b.getAttribute('data-hype-demo') || '';
           if (mode === 'auto') {
-            clearHypeDemo();
-            stopHypePolling();
-            setHypeUI({ value: 0, rightTag: '', sub: getHypeText().waiting, live: false });
+            // No-games demo: "Auto" cycles levels so you can see the glow moving.
+            startHypeDemoAuto();
             return;
           }
           const live = hypeDemoState?.live ?? false;
@@ -1055,15 +1747,24 @@ function renderPickCard() {
       const liveBtn = container.querySelector('[data-hype-live="toggle"]');
       if (liveBtn) {
         liveBtn.addEventListener('click', () => {
+          // If auto demo is running, keep it running and just flip live.
+          if (hypeDemoState?.mode === 'auto') {
+            hypeDemoState.live = !(hypeDemoState.live ?? true);
+            tickHypeDemoAuto();
+            return;
+          }
           const level = hypeDemoState?.level || 'calm';
           const live = !(hypeDemoState?.live ?? false);
           applyHypeDemo(level, live);
         });
       }
 
-      if (hypeDemoState) {
+      if (hypeDemoState?.mode === 'auto') {
+        startHypeDemoAuto();
+      } else if (hypeDemoState) {
         applyHypeDemo(hypeDemoState.level, hypeDemoState.live);
       } else {
+        // Start with calm demo (static). User can press Auto to animate.
         setHypeUI({ value: 0, rightTag: 'DEMO', sub: getHypeText().waiting, live: false });
       }
       return;
@@ -1260,8 +1961,8 @@ function renderPickCard() {
       b.addEventListener('click', () => {
         const mode = b.getAttribute('data-hype-demo') || '';
         if (mode === 'auto') {
-          clearHypeDemo();
-          initHypeForPick(pickGame.gamePk);
+          // Debug: always animate so you can SEE the glow move.
+          startHypeDemoAuto();
           return;
         }
         const live = hypeDemoState?.live ?? false;
@@ -1278,7 +1979,10 @@ function renderPickCard() {
     }
   }
 
-  if (IS_DEBUG && hypeDemoState) {
+  if (IS_DEBUG && hypeDemoState?.mode === 'auto') {
+    // keep running
+    startHypeDemoAuto();
+  } else if (IS_DEBUG && hypeDemoState) {
     applyHypeDemo(hypeDemoState.level, hypeDemoState.live);
   } else {
     initHypeForPick(pickGame.gamePk);
@@ -1319,6 +2023,8 @@ function applyLanguageToStaticText() {
 
   // ピックカードも文言が変わるので再描画
   renderPickCard();
+  renderOnePlayCard();
+  renderMomentFeed();
 }
 
 function updateLanguageButtons() {
@@ -1386,18 +2092,24 @@ function run() {
         showNoGames(true);
         pickGame = null;
         pickSelection = null;
+        onePlayState = null;
         renderPickCard();
+        renderOnePlayCard();
+        renderMomentFeed();
         return;
       }
 
       cachedGames = games;
       pickGame = choosePickGame(games);
       pickSelection = loadPickSelection();
+      onePlayState = loadOnePlayState();
       if (pickSelection && pickSelection.gamePk !== pickGame?.gamePk) {
         // 別試合を過去に保存していた場合はリセット
         pickSelection = null;
       }
       renderPickCard();
+      renderOnePlayCard();
+      renderMomentFeed();
       renderAllGames();
       showGamesList(true);
     })
